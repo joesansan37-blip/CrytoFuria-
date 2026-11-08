@@ -1,20 +1,17 @@
 """
 AUTOTRADING CRYPTO & FOREX BOT ENGINE (PAPER TRADING ONLY)
-Estrategia: Institutional_Scalper_MT5 / EMA + RSI
-Modo seguro: no usa API ni wallet real.
-La ejecución se limita a señales en tiempo real y registro simulado de posiciones.
+Safe mode: signals only, no API keys, no wallet real, no real orders.
 """
 
-import os
 import json
-import time
 import logging
+import os
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import ccxt
-import requests
 import pandas as pd
+import requests
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -22,71 +19,6 @@ STATE_FILE = "bot_state.json"
 PAPER_STATE_FILE = "paper_state.json"
 PAPER_TRADING = os.getenv("PAPER_TRADING", "true").strip().lower() == "true"
 SIMULATED_BALANCE_USDT = float(os.getenv("SIMULATED_BALANCE_USDT", "10000.0"))
-
-# --- paper state ---
-def read_paper_state():
-    default = {
-        "cash_usdt": SIMULATED_BALANCE_USDT,
-        "open_positions": {},
-        "total_realized_pnl": 0.0,
-        "history": []
-    }
-    if not os.path.exists(PAPER_STATE_FILE):
-        return default
-    try:
-        with open(PAPER_STATE_FILE, "r") as f:
-            saved = json.load(f)
-        default.update(saved)
-        if "open_positions" not in saved:
-            default["open_positions"] = {}
-        if "history" not in saved:
-            default["history"] = []
-        return default
-    except Exception as exc:
-        logging.warning(f"Aviso leyendo {PAPER_STATE_FILE}: {exc}")
-        return default
-
-
-def save_paper_state(state):
-    os.makedirs(os.path.dirname(PAPER_STATE_FILE) or ".", exist_ok=True)
-    with open(PAPER_STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
-
-
-def get_paper_balance_text():
-    state = read_paper_state()
-    return f"{float(state.get('cash_usdt', SIMULATED_BALANCE_USDT)):,.2f} USDT"
-
-
-# --- health server ---
-class RenderHealthServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain; charset=utf-8')
-        self.end_headers()
-        self.wfile.write(b"Bot Cripto & Divisas Multiactivo activo 24/7 en Render! (PAPER TRADING)")
-
-    def log_message(self, format, *args):
-        pass
-
-
-def run_health_check_service():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), RenderHealthServer)
-    logging.info(f"Servidor de Salud Render activo en el puerto {port}")
-    server.serve_forever()
-
-
-threading.Thread(target=run_health_check_service, daemon=True).start()
-
-# --- config ---
-EXCHANGE_ID = os.getenv("EXCHANGE_ID", "paper").lower()
-API_KEY = os.getenv("API_KEY", "").strip()
-API_SECRET = os.getenv("API_SECRET", "").strip()
-IS_TESTNET = os.getenv("IS_TESTNET", "false").lower() == "true"
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-ACTIVE_TELEGRAM_CHAT_ID = TELEGRAM_CHAT_ID
 
 DEFAULT_PAIRS = "BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,DOGE/USDT,EUR/USDT,GBP/USDT"
 PAIRS_CONFIG = os.getenv("TRADING_PAIRS", DEFAULT_PAIRS)
@@ -100,13 +32,48 @@ STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "2.0"))
 TAKE_PROFIT_PCT = float(os.getenv("TAKE_PROFIT_PCT", "5.0"))
 MAX_DAILY_LOSS_USDT = float(os.getenv("MAX_DAILY_LOSS_USDT", "50.0"))
 
+EXCHANGE_ID = os.getenv("EXCHANGE_ID", "paper").lower().strip()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+ACTIVE_TELEGRAM_CHAT_ID = TELEGRAM_CHAT_ID
+
 exchange = None
 is_trading_active = True
-active_positions = {}
 cycle_counter = 0
+active_positions = {}
 
 
-# --- dynamic state ---
+def read_paper_state():
+    default = {
+        "cash_usdt": SIMULATED_BALANCE_USDT,
+        "open_positions": {},
+        "total_realized_pnl": 0.0,
+        "history": [],
+    }
+    if not os.path.exists(PAPER_STATE_FILE):
+        return default
+    try:
+        with open(PAPER_STATE_FILE, "r") as f:
+            saved = json.load(f)
+        default.update(saved)
+        default["cash_usdt"] = float(saved.get("cash_usdt", default["cash_usdt"]))
+        default["open_positions"] = saved.get("open_positions", {})
+        default["total_realized_pnl"] = float(saved.get("total_realized_pnl", 0.0))
+        default["history"] = saved.get("history", [])
+        return default
+    except Exception as exc:
+        logging.warning(f"Aviso leyendo {PAPER_STATE_FILE}: {exc}")
+        return default
+
+
+def save_paper_state(state):
+    try:
+        with open(PAPER_STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as exc:
+        logging.error(f"Error guardando {PAPER_STATE_FILE}: {exc}")
+
+
 def read_dynamic_state():
     state = {
         "exchange_id": EXCHANGE_ID,
@@ -133,16 +100,20 @@ def read_dynamic_state():
 
 
 def save_dynamic_state(exchange_id: str, proxy_url: str = None, chat_id: str = None):
-    state = read_dynamic_state()
-    state["exchange_id"] = str(exchange_id).lower().strip()
+    current = read_dynamic_state()
+    current["exchange_id"] = str(exchange_id).lower().strip()
+    current["paper_trading"] = PAPER_TRADING
     if proxy_url is not None:
-        state["proxy_url"] = str(proxy_url).strip()
-    if chat_id:
-        state["active_chat_id"] = str(chat_id).strip()
-    state["paper_trading"] = PAPER_TRADING
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
-    return state
+        current["proxy_url"] = str(proxy_url).strip()
+    if chat_id and str(chat_id).strip():
+        current["active_chat_id"] = str(chat_id).strip()
+    current["updated_at"] = time.time()
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(current, f, indent=2)
+    except Exception as exc:
+        logging.error(f"Error guardando {STATE_FILE}: {exc}")
+    return current
 
 
 def get_target_chat_id(explicit_chat_id: str = None) -> str:
@@ -157,12 +128,37 @@ def get_target_chat_id(explicit_chat_id: str = None) -> str:
     return ACTIVE_TELEGRAM_CHAT_ID
 
 
-# --- telegram sender ---
+class RenderHealthServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(b"Bot Cripto & Divisas Multiactivo activo 24/7 en Render! (PAPER TRADING)")
+
+    def log_message(self, format, *args):
+        pass
+
+
+def run_health_check_service():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), RenderHealthServer)
+    logging.info(f"Servidor de Salud Render activo en el puerto {port}")
+    server.serve_forever()
+
+
+threading.Thread(target=run_health_check_service, daemon=True).start()
+
+
+def get_paper_balance_text():
+    state = read_paper_state()
+    return f"{float(state.get('cash_usdt', SIMULATED_BALANCE_USDT)):,.2f} USDT"
+
+
 def send_telegram(message: str, reply_markup: dict = None, target_chat_id: str = None) -> bool:
     token = TELEGRAM_BOT_TOKEN
     chat_id = get_target_chat_id(target_chat_id)
     if not token or "TU_TELEGRAM" in token:
-        logging.warning("TELEGRAM INACTIVO: faltan variables de entorno")
+        logging.warning("TELEGRAM INACTIVO: falta TELEGRAM_BOT_TOKEN")
         return False
     if not chat_id or "TU_CHAT" in chat_id:
         logging.warning("TELEGRAM EN ESPERA: no hay Chat ID válido")
@@ -185,33 +181,6 @@ def send_telegram(message: str, reply_markup: dict = None, target_chat_id: str =
         return False
 
 
-def edit_telegram_message(target_chat_id, message_id: int, text: str, reply_markup: dict = None):
-    token = TELEGRAM_BOT_TOKEN
-    if not token:
-        return False
-    payload = {"chat_id": target_chat_id, "message_id": message_id, "text": text, "parse_mode": "Markdown"}
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-    try:
-        r = requests.post(f"https://api.telegram.org/bot{token}/editMessageText", json=payload, timeout=5)
-        if r.status_code != 200:
-            payload.pop("parse_mode", None)
-            requests.post(f"https://api.telegram.org/bot{token}/editMessageText", json=payload, timeout=5)
-        return True
-    except Exception:
-        return False
-
-
-def answer_callback_query(cq_id: str):
-    if not TELEGRAM_BOT_TOKEN:
-        return
-    try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery", json={"callback_query_id": cq_id}, timeout=3)
-    except Exception:
-        pass
-
-
-# --- market helper ---
 def map_symbol_for_kraken(symbol: str) -> str:
     s = symbol.replace("/", "").replace("-", "").upper()
     if "BTC" in s:
@@ -227,24 +196,17 @@ def map_symbol_for_kraken(symbol: str) -> str:
 
 def calculate_technical_signals(symbol: str):
     try:
-        ohlcv = None
-        if exchange and hasattr(exchange, "fetch_ohlcv"):
-            try:
-                ohlcv = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=100)
-            except Exception:
-                ohlcv = None
-
-        if not ohlcv or len(ohlcv) < 20:
-            pair_code = map_symbol_for_kraken(symbol)
-            url = f"https://api.kraken.com/0/public/OHLC?pair={pair_code}&interval=15"
-            resp = requests.get(url, timeout=8, headers={"User-Agent": "CryptoForexBot/2.0"}).json()
-            if "result" in resp:
-                key = next((k for k in resp["result"].keys() if k != "last"), None)
-                if key:
-                    raw = resp["result"][key]
-                    ohlcv = [[int(c[0]) * 1000, float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])] for c in raw[-100:]]
-
-        if not ohlcv or len(ohlcv) < 20:
+        pair_code = map_symbol_for_kraken(symbol)
+        url = f"https://api.kraken.com/0/public/OHLC?pair={pair_code}&interval=15"
+        resp = requests.get(url, timeout=8, headers={"User-Agent": "CryptoForexBot/2.0"}).json()
+        if "result" not in resp:
+            return None
+        key = next((k for k in resp["result"].keys() if k != "last"), None)
+        if not key:
+            return None
+        raw = resp["result"][key]
+        ohlcv = [[int(c[0]) * 1000, float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])] for c in raw[-100:]]
+        if len(ohlcv) < 20:
             return None
 
         df = pd.DataFrame(ohlcv, columns=["time", "open", "high", "low", "close", "volume"])
@@ -294,8 +256,7 @@ def calculate_technical_signals(symbol: str):
         return None
 
 
-# --- paper trading helpers ---
-def ensure_paper_entry(symbol, side, entry, amount, sl, tp):
+def ensure_paper_position(symbol, side, entry, amount, sl, tp):
     state = read_paper_state()
     state["open_positions"] = state.get("open_positions", {})
     state["open_positions"][symbol] = {
@@ -314,45 +275,47 @@ def ensure_paper_entry(symbol, side, entry, amount, sl, tp):
     return state
 
 
-def close_paper_position(symbol, pnl):
+def close_paper_position(symbol, exit_price, pnl):
     state = read_paper_state()
     pos = state.get("open_positions", {}).pop(symbol, None)
-    if pos:
-        state["cash_usdt"] = float(state.get("cash_usdt", SIMULATED_BALANCE_USDT)) + float(pos.get("notional", ORDER_SIZE_USDT))
-        if pos["side"] == "BUY":
-            state["cash_usdt"] = float(state["cash_usdt"]) + float(pnl)
-        else:
-            state["cash_usdt"] = float(state["cash_usdt"]) - float(pnl)
-        state["total_realized_pnl"] = float(state.get("total_realized_pnl", 0.0)) + float(pnl)
-        state["history"].append({"symbol": symbol, "pnl": float(pnl), "side": pos["side"], "time": int(time.time())})
-        save_paper_state(state)
+    if not pos:
+        return
+    state["cash_usdt"] = float(state.get("cash_usdt", SIMULATED_BALANCE_USDT)) + float(exit_price) * float(pos.get("amount", 0.0))
+    state["total_realized_pnl"] = float(state.get("total_realized_pnl", 0.0)) + float(pnl)
+    state["history"].append({
+        "symbol": symbol,
+        "side": pos.get("side"),
+        "pnl": float(pnl),
+        "exit_price": float(exit_price),
+        "timestamp": int(time.time()),
+    })
+    save_paper_state(state)
 
 
-# --- order execution ---
 def execute_crypto_order(symbol: str, side: str, current_price: float, reason: str = "Momentum Técnico"):
-    if PAPER_TRADING:
-        amount = (ORDER_SIZE_USDT * LEVERAGE) / current_price
-        amount = round(amount, 4)
-        sl_price = current_price * (1 - (STOP_LOSS_PCT / 100.0)) if side == "BUY" else current_price * (1 + (STOP_LOSS_PCT / 100.0))
-        tp_price = current_price * (1 + (TAKE_PROFIT_PCT / 100.0)) if side == "BUY" else current_price * (1 - (TAKE_PROFIT_PCT / 100.0))
-        ensure_paper_entry(symbol, side, current_price, amount, sl_price, tp_price)
-        active_positions[symbol] = {"side": side, "entry": current_price, "amount": amount, "sl": sl_price, "tp": tp_price}
-        label = "COMPRA (LONG)" if side == "BUY" else "VENTA (SHORT)"
-        send_telegram(
-            f"🧪 *SEÑAL SIMULADA: {label}*\n\n"
-            f"• Exchange: *PAPER*\n"
-            f"• Par: *{symbol}*\n"
-            f"• Precio de Entrada: *{current_price:,.4f} USDT*\n"
-            f"• Monto Posición: *{ORDER_SIZE_USDT:.2f} USDT* ({LEVERAGE}x)\n"
-            f"• Stop Loss: *{sl_price:,.4f} USDT*\n"
-            f"• Take Profit: *{tp_price:,.4f} USDT*\n"
-            f"• Lógica / Motivo: *{reason}*\n"
-            "• Funcionamiento: *Se registra en modo seguro sin riesgo real*"
-        )
+    if not PAPER_TRADING:
+        logging.info("Ejecución real deshabilitada: rama paper-trading-only")
         return
 
-    # real flow kept disabled intentionally for paper-trading branch
-    logging.info("Ejecución real deshabilitada en rama paper-trading-only.")
+    amount = (ORDER_SIZE_USDT * LEVERAGE) / current_price
+    amount = round(amount, 4)
+    sl_price = current_price * (1 - (STOP_LOSS_PCT / 100.0)) if side == "BUY" else current_price * (1 + (STOP_LOSS_PCT / 100.0))
+    tp_price = current_price * (1 + (TAKE_PROFIT_PCT / 100.0)) if side == "BUY" else current_price * (1 - (TAKE_PROFIT_PCT / 100.0))
+
+    ensure_paper_position(symbol, side, current_price, amount, sl_price, tp_price)
+    active_positions[symbol] = {"side": side, "entry": current_price, "amount": amount, "sl": sl_price, "tp": tp_price}
+    label = "COMPRA (LONG)" if side == "BUY" else "VENTA (SHORT)"
+    send_telegram(
+        f"🧪 *SEÑAL SIMULADA: {label}*\n\n"
+        f"• Exchange: *PAPER*\n"
+        f"• Par: *{symbol}*\n"
+        f"• Precio de Entrada: *{current_price:,.4f} USDT*\n"
+        f"• Monto Posición: *{ORDER_SIZE_USDT:.2f} USDT* ({LEVERAGE}x)\n"
+        f"• Stop Loss: *{sl_price:,.4f} USDT*\n"
+        f"• Take Profit: *{tp_price:,.4f} USDT*\n"
+        f"• Lógica / Motivo: *{reason}*\n"
+        "• Funcionamiento: *Se registra en modo seguro sin riesgo real*"
+    )
 
 
 def close_all_crypto_positions():
@@ -362,24 +325,12 @@ def close_all_crypto_positions():
         state["cash_usdt"] = SIMULATED_BALANCE_USDT
         save_paper_state(state)
         active_positions.clear()
-        logging.info("Todas las posiciones simuladas fueron cerradas.")
         send_telegram("🔒 *Todas las posiciones simuladas han sido cerradas de emergencia.*")
         return
-
-    if exchange and hasattr(exchange, "cancel_all_orders"):
-        for sym in SYMBOLS:
-            try:
-                exchange.cancel_all_orders(sym)
-            except Exception:
-                pass
     active_positions.clear()
-    logging.info("Todas las órdenes reales han sido cerradas.")
-    send_telegram("🔒 *Todas las órdenes han sido cerradas de emergencia.*")
 
 
 def check_circuit_breaker():
-    if PAPER_TRADING:
-        return True
     return True
 
 
@@ -392,88 +343,72 @@ def send_market_radar_pulse(results: list):
     send_telegram("\n".join(lines))
 
 
-# --- main loop ---
-def init_exchange(force_exchange_id: str = None):
-    global exchange
-    state = read_dynamic_state()
-    target_ex = (force_exchange_id or state.get("exchange_id") or EXCHANGE_ID).lower().strip()
-    EXCHANGE_ID = target_ex
-    if PAPER_TRADING:
-        exchange = None
-        logging.info("Modo paper-trading activo: sin wallet ni API real.")
-        return True
-    return False
-
-
 def run_crypto_loop():
     global cycle_counter
-    while not init_exchange():
-        logging.warning("Conexión en espera. Reintentando en 30s.")
-        time.sleep(30)
-
-    logging.info("Bot en modo paper-trading. Escaneando señales en tiempo real.")
+    logging.info("Bot operando en modo paper-trading. Escaneando señales en tiempo real.")
     while True:
         try:
             if is_trading_active and check_circuit_breaker():
                 cycle_results = []
                 for symbol in SYMBOLS:
                     sig = calculate_technical_signals(symbol)
-                    if sig:
-                        cycle_results.append(sig)
-                        price = sig["close"]
-                        if symbol not in active_positions:
-                            if sig["buy"]:
-                                execute_crypto_order(symbol, "BUY", price, sig.get("reason", "Cruce Alcista EMA"))
-                            elif sig["sell"]:
-                                execute_crypto_order(symbol, "SELL", price, sig.get("reason", "Cruce Bajista EMA"))
-                        else:
-                            pos = active_positions[symbol]
-                            if pos["side"] == "BUY":
-                                if price <= pos["sl"]:
-                                    pnl = (price - pos["entry"]) * pos["amount"]
-                                    send_telegram(
-                                        f"🛑 *SEÑAL DE SALIDA: STOP LOSS EJECUTADO*\n\n"
-                                        f"• Par: *{symbol}* [LONG]\n"
-                                        f"• Entrada: *{pos['entry']:,.4f} USDT*\n"
-                                        f"• Salida (SL): *{price:,.4f} USDT*\n"
-                                        f"• Resultado (PnL): *{pnl:,.2f} USDT*"
-                                    )
-                                    close_paper_position(symbol, pnl)
-                                    active_positions.pop(symbol, None)
-                                elif price >= pos["tp"]:
-                                    pnl = (price - pos["entry"]) * pos["amount"]
-                                    send_telegram(
-                                        f"🎯 *SEÑAL DE SALIDA: TAKE PROFIT ALCANZADO*\n\n"
-                                        f"• Par: *{symbol}* [LONG]\n"
-                                        f"• Entrada: *{pos['entry']:,.4f} USDT*\n"
-                                        f"• Salida (TP): *{price:,.4f} USDT*\n"
-                                        f"• Ganancia Neta (PnL): *+{pnl:,.2f} USDT* 💰"
-                                    )
-                                    close_paper_position(symbol, pnl)
-                                    active_positions.pop(symbol, None)
-                            elif pos["side"] == "SELL":
-                                if price >= pos["sl"]:
-                                    pnl = (pos["entry"] - price) * pos["amount"]
-                                    send_telegram(
-                                        f"🛑 *SEÑAL DE SALIDA: STOP LOSS EJECUTADO*\n\n"
-                                        f"• Par: *{symbol}* [SHORT]\n"
-                                        f"• Entrada: *{pos['entry']:,.4f} USDT*\n"
-                                        f"• Salida (SL): *{price:,.4f} USDT*\n"
-                                        f"• Resultado (PnL): *{pnl:,.2f} USDT*"
-                                    )
-                                    close_paper_position(symbol, pnl)
-                                    active_positions.pop(symbol, None)
-                                elif price <= pos["tp"]:
-                                    pnl = (pos["entry"] - price) * pos["amount"]
-                                    send_telegram(
-                                        f"🎯 *SEÑAL DE SALIDA: TAKE PROFIT ALCANZADO*\n\n"
-                                        f"• Par: *{symbol}* [SHORT]\n"
-                                        f"• Entrada: *{pos['entry']:,.4f} USDT*\n"
-                                        f"• Salida (TP): *{price:,.4f} USDT*\n"
-                                        f"• Ganancia Neta (PnL): *+{pnl:,.2f} USDT* 💰"
-                                    )
-                                    close_paper_position(symbol, pnl)
-                                    active_positions.pop(symbol, None)
+                    if not sig:
+                        continue
+                    cycle_results.append(sig)
+                    price = sig["close"]
+                    if symbol not in active_positions:
+                        if sig["buy"]:
+                            execute_crypto_order(symbol, "BUY", price, sig.get("reason", "Cruce Alcista EMA"))
+                        elif sig["sell"]:
+                            execute_crypto_order(symbol, "SELL", price, sig.get("reason", "Cruce Bajista EMA"))
+                    else:
+                        pos = active_positions[symbol]
+                        if pos["side"] == "BUY":
+                            if price <= pos["sl"]:
+                                pnl = (price - pos["entry"]) * pos["amount"]
+                                send_telegram(
+                                    f"🛑 *SEÑAL DE SALIDA: STOP LOSS EJECUTADO*\n\n"
+                                    f"• Par: *{symbol}* [LONG]\n"
+                                    f"• Entrada: *{pos['entry']:,.4f} USDT*\n"
+                                    f"• Salida (SL): *{price:,.4f} USDT*\n"
+                                    f"• Resultado (PnL): *{pnl:,.2f} USDT*"
+                                )
+                                close_paper_position(symbol, price, pnl)
+                                active_positions.pop(symbol, None)
+                            elif price >= pos["tp"]:
+                                pnl = (price - pos["entry"]) * pos["amount"]
+                                send_telegram(
+                                    f"🎯 *SEÑAL DE SALIDA: TAKE PROFIT ALCANZADO*\n\n"
+                                    f"• Par: *{symbol}* [LONG]\n"
+                                    f"• Entrada: *{pos['entry']:,.4f} USDT*\n"
+                                    f"• Salida (TP): *{price:,.4f} USDT*\n"
+                                    f"• Ganancia Neta (PnL): *+{pnl:,.2f} USDT* 💰"
+                                )
+                                close_paper_position(symbol, price, pnl)
+                                active_positions.pop(symbol, None)
+                        elif pos["side"] == "SELL":
+                            if price >= pos["sl"]:
+                                pnl = (pos["entry"] - price) * pos["amount"]
+                                send_telegram(
+                                    f"🛑 *SEÑAL DE SALIDA: STOP LOSS EJECUTADO*\n\n"
+                                    f"• Par: *{symbol}* [SHORT]\n"
+                                    f"• Entrada: *{pos['entry']:,.4f} USDT*\n"
+                                    f"• Salida (SL): *{price:,.4f} USDT*\n"
+                                    f"• Resultado (PnL): *{pnl:,.2f} USDT*"
+                                )
+                                close_paper_position(symbol, price, pnl)
+                                active_positions.pop(symbol, None)
+                            elif price <= pos["tp"]:
+                                pnl = (pos["entry"] - price) * pos["amount"]
+                                send_telegram(
+                                    f"🎯 *SEÑAL DE SALIDA: TAKE PROFIT ALCANZADO*\n\n"
+                                    f"• Par: *{symbol}* [SHORT]\n"
+                                    f"• Entrada: *{pos['entry']:,.4f} USDT*\n"
+                                    f"• Salida (TP): *{price:,.4f} USDT*\n"
+                                    f"• Ganancia Neta (PnL): *+{pnl:,.2f} USDT* 💰"
+                                )
+                                close_paper_position(symbol, price, pnl)
+                                active_positions.pop(symbol, None)
 
                 cycle_counter += 1
                 if (cycle_counter == 1 or cycle_counter % 40 == 0) and cycle_results:

@@ -1,23 +1,19 @@
 """
 TELEGRAM BOT CRIPTO CONTROLLER - PAPER TRADING ONLY
 
-Objetivo:
-- validar señales en tiempo real
-- registrar posiciones simuladas
-- evitar wallet real, API real y ejecución de órdenes reales
+Este archivo ofrece un panel interactivo sin hacer llamadas reales a exchanges ni wallets.
 """
 
-import os
 import json
-import time
 import logging
+import os
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import ccxt
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -25,6 +21,14 @@ STATE_FILE = "bot_state.json"
 PAPER_STATE_FILE = "paper_state.json"
 PAPER_TRADING = os.getenv("PAPER_TRADING", "true").strip().lower() == "true"
 SIMULATED_BALANCE_USDT = float(os.getenv("SIMULATED_BALANCE_USDT", "10000.0"))
+
+DEFAULT_PAIRS = "BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,DOGE/USDT,EUR/USDT,GBP/USDT"
+PAIRS_CONFIG = os.getenv("TRADING_PAIRS", DEFAULT_PAIRS)
+SYMBOLS = [p.strip().upper() for p in PAIRS_CONFIG.split(",") if p.strip()]
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+ACTIVE_TELEGRAM_CHAT_ID = TELEGRAM_CHAT_ID
 
 
 def read_paper_state():
@@ -103,26 +107,6 @@ def run_health_check_service():
 
 
 threading.Thread(target=run_health_check_service, daemon=True).start()
-
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-API_KEY = os.getenv("API_KEY", "").strip()
-API_SECRET = os.getenv("API_SECRET", "").strip()
-IS_TESTNET = os.getenv("IS_TESTNET", "false").lower() == "true"
-
-DEFAULT_PAIRS = "BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,DOGE/USDT,EUR/USDT,GBP/USDT"
-PAIRS_CONFIG = os.getenv("TRADING_PAIRS", DEFAULT_PAIRS)
-SYMBOLS = [p.strip().upper() for p in PAIRS_CONFIG.split(",") if p.strip()]
-
-
-def build_exchange_client(exchange_name: str, proxy_url: str = None):
-    if PAPER_TRADING:
-        return None
-    exchange_name = exchange_name.lower().strip()
-    if exchange_name in ['phantom', 'solana']:
-        return None
-    if not hasattr(ccxt, exchange_name):
-        raise ValueError(f"Exchange '{exchange_name}' no soportado.")
-    return ccxt.ExchangeClass()
 
 
 def get_main_menu():
@@ -245,8 +229,8 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def radar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    prices = scan_live_radar()
-    text = f"📡 *Radar Multiactivo:*\n\n{prices}"
+    price_text = scan_live_radar()
+    text = f"📡 *Radar Multiactivo:*\n\n{price_text}"
     if update.message:
         await update.message.reply_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
 
@@ -266,21 +250,13 @@ async def exchange_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "📥 *Direcciones de Depósito Cripto*\n\n"
-        "En esta rama el flujo activo es PAPER TRADING.\n"
-        "No se usa wallet real ni API."
-    )
+    text = "📥 *Direcciones de Depósito Cripto*\n\nEn esta rama el flujo activo es PAPER TRADING.\nNo se usa wallet real ni API."
     if update.message:
         await update.message.reply_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
 
 
 async def withdraw_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "📤 *Retiro de Criptomonedas*\n\n"
-        "La retirada real está deshabilitada en la rama activa.\n"
-        "El modo actual es paper trading, sin wallet ni clave privada de ningún tipo."
-    )
+    text = "📤 *Retiro de Criptomonedas*\n\nLa retirada real está deshabilitada en la rama activa.\nEl modo actual es paper trading, sin wallet ni clave privada de ningún tipo."
     if update.message:
         await update.message.reply_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
 
@@ -293,10 +269,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "balance":
         state = read_paper_state()
         text = (
-            f"💰 *Balance de tu Cuenta Cripto [{read_dynamic_state().get('exchange_id','paper').upper()}]:*\n\n"
+            f"💰 *Balance de tu Cuenta Cripto [{read_dynamic_state().get('exchange_id', 'paper').upper()}]:*\n\n"
             f"• Saldo Simulado Disponible: *{float(state.get('cash_usdt', SIMULATED_BALANCE_USDT)):,.2f} USDT*\n"
             "• Estado: *PAPER TRADING ACTIVO*\n"
-            f"• PnL Simulado Acumulado: *{float(state.get('total_realized_pnl',0.0)):,.2f} USDT*"
+            f"• PnL Simulado Acumulado: *{float(state.get('total_realized_pnl', 0.0)):,.2f} USDT*"
         )
         await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
 
@@ -338,9 +314,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    if not TOKEN or "TU_BOT" in TOKEN:
+    if not TELEGRAM_BOT_TOKEN or "TU_BOT" in TELEGRAM_BOT_TOKEN:
         print("ADVERTENCIA: Configura TELEGRAM_BOT_TOKEN en las variables de entorno de Render.")
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", start))
     app.add_handler(CommandHandler("paper", paper_command))

@@ -3,10 +3,14 @@ TELEGRAM BOT CRIPTO CONTROLLER - CONTROL REMOTO DE CRIPTOMONEDAS & DIVISAS
 Permite cambiar dinámicamente entre exchanges (Binance, Bybit, OKX, Bitget, Kraken),
 configurar proxies y routing regional anti-451, consultar saldo, radar multiactivo,
 depositar, retirar y ejecutar cierres de emergencia desde Android/Telegram.
+
+VERSIÓN ACTUAL: PAPER TRADING
+- No usa API real ni wallet real.
+- Las órdenes se registran como simuladas.
+- El objetivo es validar señales antes de usar integración real segura.
 """
 
 import os
-import sys
 import json
 import time
 import logging
@@ -19,14 +23,39 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
-# --- ARCHIVO DE ESTADO COMPARTIDO PARA CAMBIOS DINÁMICOS ---
 STATE_FILE = "bot_state.json"
+PAPER_STATE_FILE = "paper_state.json"
+PAPER_TRADING = os.getenv("PAPER_TRADING", "true").lower() == "true"
+SIMULATED_BALANCE_USDT = float(os.getenv("SIMULATED_BALANCE_USDT", "10000.0"))
+
+
+def read_paper_state():
+    default = {"cash_usdt": SIMULATED_BALANCE_USDT, "open_positions": {}, "total_realized_pnl": 0.0}
+    if not os.path.exists(PAPER_STATE_FILE):
+        return default
+    try:
+        with open(PAPER_STATE_FILE, "r") as f:
+            saved = json.load(f)
+        default.update(saved)
+        return default
+    except Exception:
+        return default
+
+
+def save_paper_state(state):
+    try:
+        with open(PAPER_STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        logging.error(f"Error guardando {PAPER_STATE_FILE}: {e}")
+
 
 def read_dynamic_state():
     state = {
-        "exchange_id": os.getenv("EXCHANGE_ID", "bybit").lower(),
+        "exchange_id": os.getenv("EXCHANGE_ID", "paper").lower(),
         "proxy_url": os.getenv("CRYPTO_PROXY_URL", "").strip(),
-        "routing_mode": "auto_anti_451"
+        "routing_mode": "auto_anti_451",
+        "paper_trading": PAPER_TRADING
     }
     if os.path.exists(STATE_FILE):
         try:
@@ -38,13 +67,17 @@ def read_dynamic_state():
                     state["proxy_url"] = saved["proxy_url"].strip()
                 if "routing_mode" in saved:
                     state["routing_mode"] = saved["routing_mode"]
+                if "paper_trading" in saved:
+                    state["paper_trading"] = bool(saved["paper_trading"])
         except Exception:
             pass
     return state
 
+
 def save_dynamic_state(exchange_id: str, proxy_url: str = None):
     current = read_dynamic_state()
     current["exchange_id"] = exchange_id.lower().strip()
+    current["paper_trading"] = PAPER_TRADING
     if proxy_url is not None:
         current["proxy_url"] = proxy_url.strip()
     current["updated_at"] = time.time()
@@ -55,15 +88,17 @@ def save_dynamic_state(exchange_id: str, proxy_url: str = None):
         logging.error(f"Error guardando {STATE_FILE}: {e}")
     return current
 
-# --- SERVIDOR WEB LIGERO PARA RENDER (100% GRATIS 24/7) ---
+
 class RenderHealthServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')
         self.end_headers()
-        self.wfile.write(b"Telegram Crypto Controller activo 24/7 en Render!")
+        self.wfile.write(b"Telegram Crypto Controller activo 24/7 en Render! (PAPER TRADING)")
+
     def log_message(self, format, *args):
         pass
+
 
 def run_health_check_service():
     port = int(os.environ.get("PORT", 10000))
@@ -71,9 +106,9 @@ def run_health_check_service():
     logging.info(f"Servidor de Salud Render escuchando en el puerto {port}")
     server.serve_forever()
 
+
 threading.Thread(target=run_health_check_service, daemon=True).start()
 
-# --- CONFIGURACIÓN DE ACCESO ---
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 API_KEY = os.getenv("API_KEY", "").strip()
 API_SECRET = os.getenv("API_SECRET", "").strip()
@@ -83,10 +118,13 @@ DEFAULT_PAIRS = "BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,DOGE/USDT,EUR/USDT
 PAIRS_CONFIG = os.getenv("TRADING_PAIRS", DEFAULT_PAIRS)
 SYMBOLS = [p.strip().upper() for p in PAIRS_CONFIG.split(",") if p.strip()]
 
+
 def build_exchange_client(exchange_name: str, proxy_url: str = None):
     exchange_name = exchange_name.lower().strip()
+    if PAPER_TRADING:
+        logging.info("MODO PAPER TRADING ACTIVO: no se conectará a ninguna exchange real.")
+        return None
     if exchange_name in ['phantom', 'solana']:
-        # Modo Phantom Wallet / Solana DEX (Jupiter/Raydium) - 100% Sin API Keys ni KYC
         return None
     if not hasattr(ccxt, exchange_name):
         raise ValueError(f"Exchange '{exchange_name}' no soportado.")
@@ -105,7 +143,6 @@ def build_exchange_client(exchange_name: str, proxy_url: str = None):
 
     client = ExchangeClass(params)
 
-    # Routing Regional Anti-451
     if exchange_name == 'bybit':
         try:
             if hasattr(client, 'urls') and isinstance(client.urls, dict) and 'api' in client.urls:
@@ -131,6 +168,7 @@ def build_exchange_client(exchange_name: str, proxy_url: str = None):
 
     return client
 
+
 def get_main_menu():
     keyboard = [
         [InlineKeyboardButton("⚡ Señal en Vivo", callback_data="signal"),
@@ -145,13 +183,15 @@ def get_main_menu():
          InlineKeyboardButton("🌐 Configurar Proxy", callback_data="proxy_info")],
         [InlineKeyboardButton("⏸️ Pausar", callback_data="pause"),
          InlineKeyboardButton("▶️ Reanudar", callback_data="resume")],
+        [InlineKeyboardButton("🧪 Paper Trading", callback_data="paper")],
         [InlineKeyboardButton("🚨 Panic Close", callback_data="panic")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
+
 def get_exchange_menu():
     state = read_dynamic_state()
-    current = state.get("exchange_id", "bybit").upper()
+    current = state.get("exchange_id", "paper").upper()
     keyboard = [
         [InlineKeyboardButton(f"{'✅ ' if current == 'PHANTOM' else ''}👻 Phantom (Solana DEX - Sin API Keys)", callback_data="set_exchange_phantom")],
         [InlineKeyboardButton(f"{'✅ ' if current == 'BYBIT' else ''}🟠 Bybit (Anti-403 Bytick)", callback_data="set_exchange_bybit"),
@@ -163,6 +203,7 @@ def get_exchange_menu():
         [InlineKeyboardButton("⬅️ Volver al Menú Principal", callback_data="back_main")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 
 def scan_live_radar():
     summary = []
@@ -180,11 +221,12 @@ def scan_live_radar():
             summary.append(f"• *{sym}*: Monitoreando")
     return "\n".join(summary)
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = read_dynamic_state()
-    current_ex = state.get("exchange_id", "bybit").upper()
+    current_ex = state.get("exchange_id", "paper").upper()
     proxy = state.get("proxy_url")
-    mode_text = "DINERO REAL (Billetera Exchange)" if (not IS_TESTNET and API_KEY) else "MODO SIMULADOR / TESTNET"
+    mode_text = "PAPER TRADING (SIN RIESGO REAL)" if PAPER_TRADING else "DINERO REAL / TESTNET"
     welcome_text = (
         "🤖 *Panel de Control Cripto & Divisas (100% Sin MetaTrader)*\n\n"
         f"• Exchange Activo: *{current_ex}*\n"
@@ -195,48 +237,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Comandos Rápidos:\n"
         "• /exchange : Cambia dinámicamente de exchange\n"
         "• /proxy : Configura proxy anti-451\n"
+        "• /paper : Estado del modo simulación\n"
         "• /radar : Escanea precios y RSI en vivo\n\n"
         "Selecciona una opción del menú interactivo:"
     )
     if update.message:
         await update.message.reply_text(welcome_text, reply_markup=get_main_menu(), parse_mode="Markdown")
 
+
 async def exchange_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = read_dynamic_state()
-    current_ex = state.get("exchange_id", "bybit").upper()
+    current_ex = state.get("exchange_id", "paper").upper()
     proxy = state.get("proxy_url")
-    
-    # Si el usuario envió '/exchange phantom' o '/exchange binance' directamente
     if context.args and len(context.args) > 0:
         new_target = context.args[0].lower().strip()
         if new_target in ["phantom", "solana", "binance", "bybit", "okx", "bitget", "kraken"]:
             save_dynamic_state(new_target)
-            if new_target in ["phantom", "solana"]:
-                msg = (
-                    "👻 *Protocolo Cambiado a PHANTOM WALLET / SOLANA DEX*\n\n"
-                    "• Modo: *100% Sin API Keys ni KYC (DeFi Descentralizado)*\n"
-                    "• Red Blockchain: *Solana Network*\n"
-                    "• Agregador: *Jupiter DEX & Raydium*\n"
-                    "• Comisiones de Red: *< $0.001 por swap*\n"
-                    "• Dirección de Depósito:\n"
-                    "`7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU`\n\n"
-                    "El bot opera con tus fondos transferidos directamente desde tu app Phantom de Android."
-                )
-            else:
-                routing_desc = 'api.bytick.com (Bypass 403)' if new_target == 'bybit' else 'api1.binance.com' if new_target == 'binance' else 'aws.okx.com' if new_target == 'okx' else 'Kraken Global Feed' if new_target == 'kraken' else 'Directo'
-                msg = (
-                    f"✅ *Exchange cambiado dinámicamente a {new_target.upper()}*\n\n"
-                    f"• Routing Regional: *{routing_desc}*\n"
-                    f"• Proxy Anti-451: *{proxy or 'Inactivo (Conexión Directa)'}*\n"
-                    "• El motor de trading en Render ha actualizado el exchange en caliente."
-                )
             if update.message:
-                await update.message.reply_text(msg, reply_markup=get_exchange_menu(), parse_mode="Markdown")
+                await update.message.reply_text(f"✅ *Cambio solicitado a {new_target.upper()}.*\n\nLa rama activa es paper trading, por seguridad no se ejecuta ninguna transacción real.", reply_markup=get_exchange_menu(), parse_mode="Markdown")
             return
-        else:
-            if update.message:
-                await update.message.reply_text("⚠️ Opción no válida. Usa: phantom, bybit, binance, okx, bitget o kraken.", reply_markup=get_exchange_menu())
-            return
+        if update.message:
+            await update.message.reply_text("⚠️ Opción no válida. Usa: phantom, bybit, binance, okx, bitget o kraken.", reply_markup=get_exchange_menu())
+        return
 
     msg = (
         "💱 *Selector Dinámico de Exchanges & DEX (Phantom / Solana)*\n\n"
@@ -248,39 +270,32 @@ async def exchange_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(msg, reply_markup=get_exchange_menu(), parse_mode="Markdown")
 
+
 async def phantom_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "👻 *MODO PHANTOM WALLET / SOLANA DEX (100% SIN API KEYS NI KYC)*\n\n"
-        "¿No tienes cuenta ni API Keys de Binance o Bybit? ¡No las necesitas!\n\n"
-        "• *Dirección de Depósito Solana de tu Bot*:\n"
-        "`7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU`\n\n"
-        "• *Cómo funciona con tu móvil Android*:\n"
-        "1. Abre la app *Phantom* en tu teléfono Android.\n"
-        "2. Envía *SOL* o *USDT (Red Solana SPL)* a la dirección de tu bot.\n"
-        "3. El bot no necesita API Key ni Secret Key de ningún exchange.\n"
-        "4. Ejecuta compras y ventas directamente en los protocolos descentralizados de Solana (*Jupiter DEX* y *Raydium*).\n"
-        "5. Para retirar tus ganancias a Phantom en cualquier momento:\n"
-        "`/withdraw <monto> <tu_direccion_phantom>`\n\n"
-        "⚡ Comisiones por orden: < $0.001 en red Solana (0.000005 SOL)."
+        "• La integración real queda deshabilitada en esta rama por seguridad.\n"
+        "• El modo activo es PAPER TRADING: no se usa wallet ni claves reales.\n"
+        "• La integración segura se habilitará más adelante con una wallet nueva y separada."
     )
     if update.message:
         await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
 
+
 async def proxy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = read_dynamic_state()
     current_proxy = state.get("proxy_url")
-    
     if context.args and len(context.args) > 0:
         arg = context.args[0].strip()
         if arg.lower() in ["off", "disable", "none", "desactivar"]:
-            save_dynamic_state(state.get("exchange_id", "bybit"), "")
+            save_dynamic_state(state.get("exchange_id", "paper"), "")
             msg = "🌐 *Proxy desactivado*. El bot ahora usa el routing regional espejo directo."
         else:
-            save_dynamic_state(state.get("exchange_id", "bybit"), arg)
+            save_dynamic_state(state.get("exchange_id", "paper"), arg)
             msg = (
                 "🌐 *Proxy Anti-451 Configurado Exitosamente*\n\n"
                 f"• Proxy: `{arg}`\n"
-                "• Todas las peticiones salientes a exchanges se enrutan ahora a través de este proxy para evitar el bloqueo HTTP 451 de EE.UU."
+                "• Todas las peticiones salientes se enrutan a través de este proxy para evitar bloqueos geográficos."
             )
         if update.message:
             await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
@@ -289,7 +304,6 @@ async def proxy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "🌐 *Configuración de Proxy Anti-Bloqueo Geográfico (HTTP 451)*\n\n"
         f"• Proxy Actual: *{current_proxy or 'Ninguno (Usando Routing Regional Espejo)'}*\n\n"
-        "Los exchanges como Binance y Bybit bloquean las IPs de servidores de EE.UU. (HTTP 451 / 403).\n\n"
         "Para añadir un proxy residencial o datacenter (Europa/Asia):\n"
         "`/proxy http://usuario:clave@host:puerto`\n"
         "`/proxy socks5://host:puerto`\n\n"
@@ -299,32 +313,33 @@ async def proxy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
 
+
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    state = read_dynamic_state()
-    current_ex = state.get("exchange_id", "bybit").upper()
+    state = read_paper_state()
+    current_ex = read_dynamic_state().get("exchange_id", "paper").upper()
+    cash = float(state.get("cash_usdt", SIMULATED_BALANCE_USDT))
     msg = (
         f"💰 *Balance de tu Cuenta Cripto [{current_ex}]:*\n\n"
-        "• Saldo Disponible: *$10,450.20 USDT*\n"
-        "• Saldo Solana: *24.5 SOL* (~$4,460.00)\n"
-        "• Saldo Bitcoin: *0.152 BTC* (~$10,412.00)\n"
-        "• Capital Asignado al Bot: *$5,000.00 USDT*\n"
-        "• Margen Libre: *$5,450.20 USDT*\n"
-        "• PnL No Realizado: *+$248.50 USDT* 🟢\n"
+        f"• Saldo Simulado Disponible: *{cash:,.2f} USDT*\n"
+        "• Estado: *PAPER TRADING ACTIVO*\n"
+        "• Riesgo Real: *0.00 USDT*\n"
+        "• PnL Simulado Acumulado: *0.00 USDT*\n"
         f"• Modo Activo: *{current_ex}* | Estado: *Operativo 24/7*"
     )
     if update.message:
         await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
 
+
 async def radar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prices = scan_live_radar()
-    state = read_dynamic_state()
     msg = (
-        f"📡 *Radar Multiactivo [{state.get('exchange_id', 'bybit').upper()}]:*\n\n"
+        f"📡 *Radar Multiactivo [{read_dynamic_state().get('exchange_id', 'paper').upper()}]:*\n\n"
         f"{prices}\n\n"
-        "⚡ *Estrategia*: Reglas de tu Expert Advisor aplicadas simultáneamente."
+        "⚡ *Estrategia*: Reglas de tu Expert Advisor aplicadas simultáneamente en modo de simulación."
     )
     if update.message:
         await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
+
 
 async def pairs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pairs_list = "\n".join([f"• {p}" for p in SYMBOLS])
@@ -335,96 +350,74 @@ async def pairs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
 
+
 async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "📥 *Direcciones de Depósito Cripto Real:*\n\n"
-        "• *👻 Solana (SOL) & USDT-SPL (Phantom - 100% Sin API Keys ni KYC)*:\n"
-        "`7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU`\n\n"
-        "• *USDT (Tron TRC-20)* (Recomendado CEX - Comisiones <$1):\n"
-        "`TYj8rX9wQ7z2kLmNp1sTuV4wXyZaBcDeFg`\n\n"
-        "• *USDT (BNB Chain BEP-20)*:\n"
-        "`0x71C836642F4a41300d56bc0264FB4b97D6789e5B`\n\n"
-        "• *Bitcoin (BTC)*:\n"
-        "`bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh`\n\n"
-        "💡 *¿No tienes claves de Binance?* Envía fondos desde tu app Phantom a la dirección de Solana de arriba."
+        "📥 *Direcciones de Depósito Cripto*\n\n"
+        "En esta rama el flujo activo es PAPER TRADING.\n"
+        "No se usa wallet real ni API.\n"
+        "Cuando se valide la integración segura, se mostrará una dirección nueva y separada."
     )
     if update.message:
         await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
+
 
 async def withdraw_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args and len(context.args) >= 2:
-        amount_w = context.args[0]
-        addr_w = context.args[1]
-        msg = (
-            f"📤 *Retiro Solicitado Exitosamente*\n\n"
-            f"• Monto: *{amount_w}*\n"
-            f"• Dirección Destino: `{addr_w}`\n"
-            "• Estado: *Enviando transacción a la red blockchain...*"
-        )
-        if update.message:
-            await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
-        return
-
     msg = (
-        "📤 *Retiro de Criptomonedas:*\n\n"
-        "Para retirar directamente desde Telegram a tu Phantom o exchange:\n"
-        "`/withdraw <monto> <tu_direccion_billetera>`\n\n"
-        "Ejemplo para retirar a tu Phantom:\n"
-        "`/withdraw 50 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU`"
+        "📤 *Retiro de Criptomonedas*\n\n"
+        "La retirada real está deshabilitada en la rama activa.\n"
+        "El modo actual es paper trading, sin wallet ni clave privada de ningún tipo."
     )
     if update.message:
         await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
+
 
 async def invest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "🚀 *Inversión de Capital en Autotrading:*\n\n"
-        "• Capital Asignado al Bot: *$500.00 USDT*\n"
+        "• Capital Asignado al Bot: *10,000.00 USDT* (simulado)\n"
         "• Gestión de Riesgo: *2.0% por operación*\n"
         "• Apalancamiento: *5x Futuros*\n"
         "• Interés Compuesto: *Activado*\n"
-        "• Protección: *Circuit Breaker diario activado (-$50 USDT)*"
+        "• Protección: *Circuit Breaker diario activado (-$50 USDT)*\n"
+        "• Estado: *PAPER TRADING*"
     )
     if update.message:
         await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
+
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    
+
     if data == "balance":
-        state = read_dynamic_state()
-        current_ex = state.get("exchange_id", "bybit").upper()
+        state = read_paper_state()
+        cash = float(state.get("cash_usdt", SIMULATED_BALANCE_USDT))
         text = (
-            f"💰 *Balance de tu Cuenta Cripto [{current_ex}]:*\n\n"
-            "• Saldo USDT: *$10,450.20 USDT*\n"
-            "• Saldo Solana: *24.5 SOL* (~$4,460.00)\n"
-            "• Saldo Bitcoin: *0.152 BTC* (~$10,412.00)\n"
-            "• Capital Asignado: *$5,000.00 USDT*\n"
-            "• PnL No Realizado: *+$248.50 USDT* 🟢\n"
-            f"• Modo: *{current_ex}* | Estado: *Operativo*"
+            f"💰 *Balance de tu Cuenta Cripto [{read_dynamic_state().get('exchange_id', 'paper').upper()}]:*\n\n"
+            f"• Saldo Simulado Disponible: *{cash:,.2f} USDT*\n"
+            "• Estado: *PAPER TRADING ACTIVO*\n"
+            "• Riesgo Real: *0.00 USDT*\n"
+            f"• Modo: *{read_dynamic_state().get('exchange_id', 'paper').upper()}* | Estado: *Operativo*"
         )
         await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
 
     elif data == "phantom_info":
         text = (
             "👻 *MODO PHANTOM WALLET / SOLANA DEX (SIN API KEYS)*\n\n"
-            "¡Opera con fondos reales sin crear cuentas en Binance ni pasar KYC!\n\n"
-            "• *Dirección de Depósito Solana*:\n"
-            "`7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU`\n\n"
-            "• Envía SOL o USDT (SPL) desde tu app Phantom en Android.\n"
-            "• El bot opera en Jupiter DEX y Raydium con comisiones de <$0.001."
+            "La integración real queda deshabilitada en esta rama.\n\n"
+            "• Modo activo: *PAPER TRADING*\n"
+            "• Sin wallet real conectada.\n"
+            "• Se habilitará una wallet nueva y separada cuando se valide la integración segura."
         )
         await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
-        
+
     elif data == "exchange_menu":
-        state = read_dynamic_state()
-        current_ex = state.get("exchange_id", "bybit").upper()
-        proxy = state.get("proxy_url")
         text = (
             "💱 *Selector Dinámico de Exchanges & DEX (Phantom / Solana)*\n\n"
-            f"• Modo Actual: *{current_ex}*\n"
-            f"• Proxy Anti-451: *{proxy or 'Sin proxy (Routing Regional Espejo)'}*\n"
+            f"• Modo Actual: *{read_dynamic_state().get('exchange_id', 'paper').upper()}*\n"
+            f"• Proxy Anti-451: *{read_dynamic_state().get('proxy_url') or 'Sin proxy (Routing Regional Espejo)'}*\n"
             "• Protección 451/403: *Activa*\n\n"
             "Selecciona un exchange o protocolo:"
         )
@@ -433,33 +426,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("set_exchange_"):
         target_ex = data.replace("set_exchange_", "").lower()
         save_dynamic_state(target_ex)
-        state = read_dynamic_state()
-        proxy = state.get("proxy_url")
-        if target_ex in ["phantom", "solana"]:
-            text = (
-                "👻 *Cambiado a MODO PHANTOM WALLET / SOLANA DEX*\n\n"
-                "• Autenticación: *100% Sin API Keys ni KYC*\n"
-                "• Protocolo: *Jupiter DEX Aggregator & Raydium*\n"
-                "• Dirección de Depósito:\n"
-                "`7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU`\n\n"
-                "• Estado: *Sincronizado en caliente en Render.*"
-            )
-        else:
-            routing_desc = "api.bytick.com (Anti-CloudFront 403)" if target_ex == "bybit" else "api1.binance.com (Cluster Espejo)" if target_ex == "binance" else "aws.okx.com (AWS Gateway)" if target_ex == "okx" else "Kraken Global Feed (100% Sin Bloqueo)" if target_ex == "kraken" else "Directo"
-            text = (
-                f"✅ *Exchange cambiado exitosamente a {target_ex.upper()}*\n\n"
-                f"• Routing Regional: *{routing_desc}*\n"
-                f"• Proxy Anti-451: *{proxy or 'Inactivo (Conexión Directa)'}*\n"
-                "• Estado: *Sincronizado con el motor en caliente en Render.*"
-            )
+        text = f"✅ *Cambio solicitado a {target_ex.upper()}.*\n\nLa rama activa es paper trading, por seguridad no se ejecuta ninguna transacción real."
         await query.edit_message_text(text, reply_markup=get_exchange_menu(), parse_mode="Markdown")
 
     elif data == "proxy_info":
-        state = read_dynamic_state()
-        current_proxy = state.get("proxy_url")
         text = (
             "🌐 *Configuración de Proxy Anti-Bloqueo Geográfico (HTTP 451)*\n\n"
-            f"• Proxy Actual: *{current_proxy or 'Ninguno (Usando Routing Regional Espejo)'}*\n\n"
+            f"• Proxy Actual: *{read_dynamic_state().get('proxy_url') or 'Ninguno (Usando Routing Regional Espejo)'}*\n\n"
             "Para configurar un proxy envía por comando:\n"
             "`/proxy http://usuario:clave@host:puerto`\n\n"
             "Para desactivarlo:\n"
@@ -482,46 +455,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "deposit":
         text = (
-            "📥 *Direcciones de Depósito Cripto:*\n\n"
-            "• *👻 Solana (SOL) & USDT-SPL (Phantom - 100% Sin API Keys)*:\n"
-            "`7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU`\n\n"
-            "• *USDT (Tron TRC-20)*:\n"
-            "`TYj8rX9wQ7z2kLmNp1sTuV4wXyZaBcDeFg`\n\n"
-            "• *USDT (BNB Chain BEP-20)*:\n"
-            "`0x71C836642F4a41300d56bc0264FB4b97D6789e5B`\n\n"
-            "• *Bitcoin (BTC)*:\n"
-            "`bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh`"
+            "📥 *Direcciones de Depósito Cripto*\n\n"
+            "En esta rama el flujo activo es PAPER TRADING.\n"
+            "No se usa wallet real ni API."
         )
         await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
 
     elif data == "withdraw":
-        text = "📤 *Retiro de Criptomonedas:*\n\nEscribe en Telegram:\n`/withdraw <monto> <tu_direccion_phantom_o_cex>`\n\nEjemplo:\n`/withdraw 50 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU`"
+        text = "📤 *Retiro de Criptomonedas:*\n\nLa retirada real está deshabilitada en la rama activa.\n\nEl modo actual es paper trading, sin wallet ni clave privada."
         await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
 
     elif data == "invest":
         text = (
             "🚀 *Inversión de Capital en Autotrading:*\n\n"
-            "• Capital Asignado al Bot: *$500.00 USDT*\n"
+            "• Capital Asignado al Bot: *10,000.00 USDT* (simulado)\n"
             "• Rendimiento Histórico: *+18.4% Mensual*\n"
-            "• Circuit Breaker activo para proteger el capital."
+            "• Circuit Breaker activo para proteger el capital.\n"
+            "• Estado: *PAPER TRADING*"
         )
         await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
 
     elif data == "positions":
-        text = (
-            "📈 *Posiciones Cripto Activas:*\n\n"
-            "1. *BTC/USDT* [LONG]\n"
-            "   • Entrada: $68,400.00 | Actual: $68,950.00\n"
-            "   • Ganancia: *+$82.50 USDT* (+4.01% ROE)\n\n"
-            "2. *ETH/USDT* [LONG]\n"
-            "   • Entrada: $3,520.00 | Actual: $3,565.00\n"
-            "   • Ganancia: *+$81.00 USDT* (+6.39% ROE)"
-        )
+        text = "📈 *Posiciones Cripto Activas:*\n\nNo hay posiciones abiertas en este momento. El bot está ejecutando la estrategia en modo papel."
         await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
-        
+
     elif data == "signal":
         text = (
             "🚨 *SEÑAL DE TRADING EN VIVO*\n\n"
+            "• Modo: *PAPER TRADING*\n"
             "• Par: *BTC/USDT*\n"
             "• Acción: *🟢 COMPRA (LONG)*\n"
             "• Precio de Entrada: *68,950.00 USDT*\n"
@@ -530,23 +491,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• RSI Actual: *54.2*\n"
             "• Lógica: *Cruce Alcista EMA + Confirmación RSI*\n"
             "• Apalancamiento: *5x*\n\n"
-            "⚡ _Monitoreo multiactivo autónomo activo 24/7._"
+            "⚡ _Monitoreo multiactivo autónomo activo 24/7, sin riesgo real._"
         )
         await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
-        
+
     elif data == "panic":
-        text = "🚨 *CIERRE DE EMERGENCIA EJECUTADO EN EL EXCHANGE*\nSe cancelaron todas las órdenes pendientes y posiciones a mercado."
+        text = "🚨 *CIERRE DE EMERGENCIA EJECUTADO EN EL MODO PAPER TRADING*\nSe cerraron todas las posiciones simuladas."
         await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
-        
+
     elif data == "pause":
-        await query.edit_message_text("⏸️ *Bot Cripto en Pausa*. No se abrirán nuevas operaciones.", reply_markup=get_main_menu(), parse_mode="Markdown")
-        
+        await query.edit_message_text("⏸️ *Bot Cripto en Pausa*. No se abrirán nuevas operaciones en modo paper trading.", reply_markup=get_main_menu(), parse_mode="Markdown")
+
     elif data == "resume":
-        await query.edit_message_text("▶️ *Bot Cripto Reanudado*. Evaluando señales de compra y venta.", reply_markup=get_main_menu(), parse_mode="Markdown")
+        await query.edit_message_text("▶️ *Bot Cripto Reanudado*. Evaluando señales de compra y venta en modo simulación.", reply_markup=get_main_menu(), parse_mode="Markdown")
+
+    elif data == "paper":
+        state = read_paper_state()
+        text = (
+            "🧪 *MODO PAPER TRADING ACTIVADO*\n\n"
+            "• La estrategia se ejecuta en tiempo real usando precios públicos.\n"
+            "• Las órdenes se registran como simuladas.\n"
+            "• No se usa API ni wallet real.\n"
+            f"• Cash simulado: *{float(state.get('cash_usdt', SIMULATED_BALANCE_USDT)):,.2f} USDT*\n"
+            f"• PnL simulado acumulado: *{float(state.get('total_realized_pnl', 0.0)):,.2f} USDT*"
+        )
+        await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode="Markdown")
+
 
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "🚨 *SEÑAL DE TRADING EN VIVO*\n\n"
+        "• Modo: *PAPER TRADING*\n"
         "• Par: *BTC/USDT*\n"
         "• Acción: *🟢 COMPRA (LONG)*\n"
         "• Precio de Entrada: *68,950.00 USDT*\n"
@@ -555,10 +530,11 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• RSI Actual: *54.2*\n"
         "• Lógica: *Cruce Alcista EMA + Confirmación RSI*\n"
         "• Apalancamiento: *5x*\n\n"
-        "⚡ _Monitoreo multiactivo autónomo activo 24/7._"
+        "⚡ _Monitoreo multiactivo autónomo activo 24/7, sin riesgo real._"
     )
     if update.message:
         await update.message.reply_text(msg, reply_markup=get_main_menu(), parse_mode="Markdown")
+
 
 def main():
     if not TOKEN or "TU_BOT" in TOKEN:
@@ -584,9 +560,11 @@ def main():
     app.add_handler(CommandHandler("retirar", withdraw_command))
     app.add_handler(CommandHandler("invest", invest_command))
     app.add_handler(CommandHandler("invertir", invest_command))
+    app.add_handler(CommandHandler("paper", lambda update, context: update.message.reply_text("🧪 *MODO PAPER TRADING ACTIVO*\n\nNo se usa wallet ni API real.", reply_markup=get_main_menu(), parse_mode="Markdown")))
     app.add_handler(CallbackQueryHandler(button_handler))
     print("Telegram Crypto Bot escuchando comandos...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,12 @@
 """
 AUTOTRADING CRYPTO & FOREX BOT ENGINE (PAPER TRADING ONLY)
 Safe mode: signals only, no API keys, no wallet real, no real orders.
+
+Features:
+- live OHLC scan using Kraken public API
+- paper positions and P&L tracking
+- Telegram dashboard and signal alerts
+- no real exchange or wallet integration
 """
 
 import json
@@ -154,6 +160,22 @@ def get_paper_balance_text():
     return f"{float(state.get('cash_usdt', SIMULATED_BALANCE_USDT)):,.2f} USDT"
 
 
+def get_paper_summary():
+    state = read_paper_state()
+    open_positions = state.get("open_positions", {})
+    msg = (
+        "🧪 *RESUMEN PAPER TRADING*\n\n"
+        f"• Balance disponible: *{float(state.get('cash_usdt', SIMULATED_BALANCE_USDT)):,.2f} USDT*\n"
+        f"• PnL total simulado: *{float(state.get('total_realized_pnl', 0.0)):,.2f} USDT*\n"
+        f"• Posiciones abiertas: *{len(open_positions)}*\n"
+        f"• Historial: *{len(state.get('history', []))} eventos*\n"
+    )
+    if open_positions:
+        for sym, pos in open_positions.items():
+            msg += f"• *{sym}*: {pos.get('side')} @ {float(pos.get('entry', 0)):,.2f} USDT\n"
+    return msg
+
+
 def send_telegram(message: str, reply_markup: dict = None, target_chat_id: str = None) -> bool:
     token = TELEGRAM_BOT_TOKEN
     chat_id = get_target_chat_id(target_chat_id)
@@ -267,10 +289,6 @@ def ensure_paper_position(symbol, side, entry, amount, sl, tp):
         "tp": float(tp),
         "notional": float(ORDER_SIZE_USDT),
     }
-    if side == "BUY":
-        state["cash_usdt"] = float(state.get("cash_usdt", SIMULATED_BALANCE_USDT)) - float(ORDER_SIZE_USDT)
-    else:
-        state["cash_usdt"] = float(state.get("cash_usdt", SIMULATED_BALANCE_USDT)) + float(ORDER_SIZE_USDT)
     save_paper_state(state)
     return state
 
@@ -345,7 +363,7 @@ def send_market_radar_pulse(results: list):
 
 def run_crypto_loop():
     global cycle_counter
-    logging.info("Bot operando en modo paper-trading. Escaneando señales en tiempo real.")
+    logging.info("Bot operativo en modo paper-trading. Escaneando señales en tiempo real.")
     while True:
         try:
             if is_trading_active and check_circuit_breaker():

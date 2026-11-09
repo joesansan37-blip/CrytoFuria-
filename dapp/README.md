@@ -1,47 +1,30 @@
 # Phantom Mini App para Telegram y Render
 
-Starter de Mini App web para abrir desde un bot de Telegram. Conecta Phantom, consulta el saldo SOL, muestra la dirección pública para recibir SOL y permite enviar SOL **solo después de que Phantom presente la transacción y el usuario la firme**. El modo predeterminado es Solana devnet.
+Versión web estática mínima para probar Phantom en Solana **devnet**. Render sirve el HTML directamente (sin React/Vite ni compilación del frontend); Telegram puede mostrar un botón `/start` que abre la Mini App.
 
-## Seguridad y alcance
+## Funciones
+- Conectar Phantom en navegadores que inyecten el proveedor Solana.
+- Mostrar dirección pública y saldo SOL de devnet.
+- Recibir: muestra la dirección de la wallet conectada; la app no custodia los fondos.
+- Enviar SOL de devnet con revisión y firma explícita del usuario en Phantom.
+- Enlace para abrir la página en el navegador de Phantom si Telegram no expone el proveedor.
 
-- La aplicación nunca solicita ni almacena frase semilla o clave privada.
-- No es custodial: “Recibir” muestra la dirección de la wallet conectada; los fondos permanecen en esa wallet.
-- El envío requiere revisión y firma explícita en Phantom. No existe aprobación automática.
-- Esta primera versión implementa SOL en devnet; no incluye swaps ni transferencias SPL de USDC/USDT. No uses mints inventados ni direcciones de depósito copiadas de ejemplos.
-- Devnet no es dinero real. No cambies a mainnet ni uses fondos reales sin pruebas, revisión de seguridad y un RPC adecuado.
+No pide ni almacena claves privadas/frase semilla. No hay firma automática. No uses dinero real: esta versión fija el RPC y el explorador a devnet.
 
-## Desarrollo local
+## Despliegue manual en Render
+En el Web Service configura:
+- Branch: `feature/phantom-solana-dapp`
+- Root Directory: `dapp`
+- Build Command: `npm install`
+- Start Command: `npm start`
+- Plan: Free, si aparece disponible en tu cuenta. El servicio gratuito puede suspenderse por inactividad.
 
-Requiere Node.js 20 o posterior.
+Variables de entorno:
+- `TELEGRAM_BOT_TOKEN`: opcional para servir solo la página; necesario para que el bot responda a `/start`. Créalo con BotFather y mantenlo secreto.
+- `APP_URL`: opcional si `RENDER_EXTERNAL_URL` no está disponible; si se configura, usa la URL HTTPS pública del servicio. No compartas el token.
+- `PORT`: Render lo proporciona automáticamente.
 
-```bash
-cd dapp
-npm install
-npm run dev
-```
+Comprueba `https://TU-SERVICIO.onrender.com/healthz` (debe responder `ok`) y abre la URL raíz. Para Telegram, registra el dominio HTTPS en BotFather con `/setdomain`, inicia el bot con `/start` y abre la Mini App. Solo un proceso debe hacer polling con el mismo token.
 
-Para probar la conexión de Phantom en un navegador, abre la URL que muestra Vite. Devnet necesita SOL de prueba. El servidor de Telegram no es necesario para ejecutar el frontend localmente.
-
-Para probar el servidor web compilado:
-
-```bash
-npm run build
-npm start
-```
-
-## Despliegue en Render
-
-El archivo `render.yaml` configura un Web Service Node con `dapp/` como raíz.
-
-1. En Render, crea un **Blueprint** desde este repositorio y selecciona la rama `feature/phantom-solana-dapp`, o crea un Web Service con `Root Directory: dapp`, Build Command `npm install && npm run build` y Start Command `npm start`.
-2. Mantén `VITE_SOLANA_RPC_URL=https://api.devnet.solana.com` y `VITE_SOLANA_NETWORK=devnet` para las primeras pruebas. Las variables `VITE_*` se incorporan al frontend durante el build; no pongas secretos en ellas.
-3. Cuando Render asigne la URL HTTPS del servicio, configura `APP_URL` con esa URL completa, por ejemplo `https://nombre-del-servicio.onrender.com`.
-4. Crea un bot con BotFather y configura `TELEGRAM_BOT_TOKEN` como variable secreta de Render. Nunca lo pongas en código del frontend.
-5. En BotFather registra el dominio HTTPS de Render para la Mini App con `/setdomain`. Luego abre `/start` en el chat privado del bot y pulsa **Abrir Phantom dApp**.
-6. Comprueba `/healthz`; debe responder `ok`.
-
-Si no se configura `TELEGRAM_BOT_TOKEN`, Render sirve la Mini App pero no inicia el bot. Para Phantom en móvil, si el navegador interno de Telegram no abre la wallet, abre la Mini App en un navegador compatible con Phantom.
-
-## Advertencias antes de producción
-
-El endpoint público de devnet es solo para pruebas y puede tener límites. Para producción se requiere un RPC fiable, cambiar explícitamente a mainnet y probar primero con cantidades pequeñas. Una dirección pública permite recibir SOL, pero no da a la dApp autoridad para retirar los fondos de esa wallet.
+## Límites deliberados
+Esta versión no implementa transferencias SPL de USDC/USDT ni swaps Jupiter. La Jupiter Swap API actual está pensada para mainnet, no devnet; inventar mints o mostrar un swap ficticio sería inseguro. Para añadir esos activos/swap hace falta decidir explícitamente una arquitectura mainnet y probar con cantidades mínimas, o crear mints propios de devnet para ensayar solo transferencias de tokens.

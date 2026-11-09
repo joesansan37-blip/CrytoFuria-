@@ -2,18 +2,13 @@ services:
   - type: web
     name: crytofuria-phantom-dapp
     runtime: node
+    plan: free
     rootDir: dapp
-    buildCommand: npm install && npm run build
+    buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
         value: 20
-      - key: VITE_SOLANA_RPC_URL
-        value: https://api.devnet.solana.com
-      - key: VITE_SOLANA_NETWORK
-        value: devnet
       - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: APP_URL
         sync: false

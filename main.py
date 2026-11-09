@@ -315,10 +315,10 @@ def handle_telegram_update(update: dict):
                     "• /exchange : Cambiar exchange dinámicamente\n"
                     "• /phantom : Modo Phantom Wallet (Sin API Keys ni KYC)\n"
                     "• /radar : Escáner de precios y RSI en vivo\n\n"
-                    "Usa los botones fijados abajo en tu pantalla o selecciona una opción del menú:"
+                    "Usa el menú interactivo de abajo:"
                 )
-                # Enviar teclado persistente en pantalla de Telegram y panel inline
-                send_telegram(welcome, reply_markup=get_persistent_keyboard_markup())
+                # Eliminar teclado persistente antiguo y mantener solo el menú inline.
+                send_telegram(welcome, reply_markup={"remove_keyboard": True})
                 send_telegram("🎛️ *Centro de Operaciones y Control Remoto:*", reply_markup=get_main_menu_markup())
 
             # 2. Señal de Trading en Vivo (/signal, /test_signal, botón)
@@ -543,11 +543,11 @@ def handle_telegram_update(update: dict):
 
             elif data == "pause":
                 is_trading_active = False
-                edit_telegram_message(chat_id, msg_id, "⏸️ *Bot Cripto en Pausa*.", reply_markup=get_main_menu_markup())
+                edit_telegram_message(chat_id, msg_id, "⏸️ *Bot Cripto en Pausa*. No se abrirán nuevas operaciones.", reply_markup=get_main_menu_markup())
 
             elif data == "resume":
                 is_trading_active = True
-                edit_telegram_message(chat_id, msg_id, "▶️ *Bot Cripto Reanudado*.", reply_markup=get_main_menu_markup())
+                edit_telegram_message(chat_id, msg_id, "▶️ *Bot Cripto Reanudado*. Evaluando señales de compra y venta.", reply_markup=get_main_menu_markup())
 
     except Exception as e:
         logging.error(f"Error procesando update de Telegram: {e}")
@@ -733,7 +733,7 @@ def init_exchange(force_exchange_id: str = None):
             f"• Modo de Operación: *{mode_label}*\n"
             f"• Feed de Mercado: *{feed_label}*\n"
             f"• Routing Anti-451: *{'Proxy Activo' if proxy else 'Routing Regional Espejo'}*\n"
-            f"• Radar Multiactivo: *{len(SYMBOLS)} Activos Monitoreados*\n"
+            f"• Radar Multiactivo: *{len(SYMBOLS)} Pares Monitoreados*\n"
             f"• Pares: *{', '.join(SYMBOLS[:6])}...*\n"
             f"• Capital de Trading: *{initial_usdt_balance:,.2f} USDT*\n"
             f"• Tamaño por Orden: *{ORDER_SIZE_USDT} USDT* ({LEVERAGE}x)\n"
@@ -802,7 +802,7 @@ def calculate_technical_signals(symbol: str):
         buy_signal = bool(ema_cross_up or trend_pullback_up or rsi_rebound_buy)
         sell_signal = bool(ema_cross_down or trend_pullback_down or rsi_rebound_sell)
 
-        reason = "Cruce Alcista EMA (Golden Cross)" if ema_cross_up else "Pullback de Tendencia Alcista en EMA" if trend_pullback_up else "Rebote de Sobreventa RSI (Giro Alcista)" if rsi_rebound_buy else "Cruce Bajista EMA (Death Cross)" if ema_cross_down else "Continuación Bajista en EMA" if trend_pullback_down else "Rechazo de Sobrecompra RSI (Giro Bajista)" if rsi_rebound_sell else "Momentum Técnico"
+        reason = "Cruce Alcista EMA (Golden Cross)" if ema_cross_up else "Pullback de Tendencia Alcista en EMA" if trend_pullback_up else "Rebote de Sobreventa RSI (Giro Alcista)" if rsi_rebound_buy else "Cruce Bajista EMA (Death Cross)" if ema_cross_down else "Pullback de Tendencia Bajista en EMA" if trend_pullback_down else "Rebote de Sobrecompra RSI (Giro Bajista)" if rsi_rebound_sell else "Momentum Técnico EMA + RSI"
         
         return {
             'symbol': symbol,

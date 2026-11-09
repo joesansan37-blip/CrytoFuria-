@@ -4,126 +4,117 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#10131c">
-  <title>Phantom · Solana Mini App</title>
+  <title>Phantom · señales Solana</title>
   <style>
-    :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#10131c;color:#f5f3ff}*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:24px 14px;background:radial-gradient(ellipse at top,#292044,#10131c 65%)}main{width:min(520px,100%);margin:0 auto}.card{padding:24px;border:1px solid #393448;border-radius:20px;background:#191824;box-shadow:0 20px 60px #0005}h1{font-size:25px;margin:0 0 8px}.sub,.hint{color:#c1bdce;line-height:1.55}.sub{margin:0 0 22px}.button{display:block;width:100%;margin-top:12px;padding:14px;border:0;border-radius:11px;background:#ab8bff;color:#211738;font-size:16px;font-weight:750;text-align:center;text-decoration:none;cursor:pointer}.button:disabled{opacity:.55}.secondary{background:#39334d;color:#fff}.box{margin-top:18px;padding:16px;border:1px solid #3c394b;border-radius:13px;background:#211f2d}.label{margin:0 0 8px;color:#b8b2c8;font-size:13px}.address{overflow-wrap:anywhere;color:#d9ccff;font:13px/1.6 ui-monospace,monospace}.balance{font-size:27px;font-weight:750}.hint{font-size:12px}.status{margin-top:16px;padding:12px;border-radius:10px;background:#242235;overflow-wrap:anywhere;line-height:1.5}.status a{color:#d8c6ff}label{display:block;margin:14px 0 6px;font-size:14px}input{width:100%;padding:12px;border:1px solid #49465a;border-radius:9px;background:#12111b;color:#fff;font-size:16px}.hidden{display:none!important}.network{display:inline-block;margin-bottom:12px;padding:5px 9px;border-radius:20px;background:#302a40;color:#d8c6ff;font-size:12px}
+    :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#10131c;color:#f5f3ff}*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:20px 14px;background:radial-gradient(ellipse at top,#292044,#10131c 65%)}main{width:min(560px,100%);margin:0 auto}.card{padding:22px;border:1px solid #393448;border-radius:20px;background:#191824;box-shadow:0 20px 60px #0005}h1{font-size:25px;margin:0 0 8px}.sub,.hint{color:#c1bdce;line-height:1.55}.sub{margin:0 0 20px}.button{display:block;width:100%;margin-top:11px;padding:14px;border:0;border-radius:11px;background:#ab8bff;color:#211738;font-size:16px;font-weight:750;text-align:center;text-decoration:none;cursor:pointer}.secondary{background:#39334d;color:#fff}.box,.signal{margin-top:16px;padding:15px;border:1px solid #3c394b;border-radius:13px;background:#211f2d}.label{margin:0 0 8px;color:#b8b2c8;font-size:13px}.address{overflow-wrap:anywhere;color:#d9ccff;font:13px/1.6 ui-monospace,monospace}.balance{font-size:25px;font-weight:750}.hint{font-size:12px}.status{margin-top:14px;padding:12px;border-radius:10px;background:#242235;overflow-wrap:anywhere;line-height:1.5}.hidden{display:none!important}label{display:block;margin:13px 0 6px;font-size:14px}input{width:100%;padding:12px;border:1px solid #49465a;border-radius:9px;background:#12111b;color:#fff;font-size:16px}.network{display:inline-block;margin-bottom:12px;padding:5px 9px;border-radius:20px;background:#302a40;color:#d8c6ff;font-size:12px}.row{display:flex;justify-content:space-between;gap:8px;align-items:center}.side{font-weight:800}.long{color:#75e0aa}.short{color:#ff9797}.neutral{color:#c6c1d3}.signal small{display:block;margin-top:8px;color:#bbb6c7;line-height:1.5}
   </style>
 </head>
 <body>
 <main><section class="card">
-  <span class="network">SOLANA DEVNET · PRUEBAS</span>
-  <h1>Phantom Wallet</h1>
-  <p class="sub">Conecta tu wallet para consultar el saldo y enviar SOL. Revisa cada transacción y fírmala en Phantom.</p>
+  <span class="network">SEÑALES · SOLANA DEVNET PARA WALLET</span>
+  <h1>Phantom + Range Breakout</h1>
+  <p class="sub">Señales informativas de BTC/USD, ETH/USD y SOL/USD calculadas con velas cerradas de 5 minutos. Las operaciones DEX requieren revisión y firma explícita en Phantom.</p>
+
+  <section class="box">
+    <div class="row"><p class="label">Estrategia Range Breakout · rango móvil 4h</p><button id="refreshSignals" class="button secondary" style="width:auto;margin:0;padding:9px 12px">Actualizar</button></div>
+    <div id="signals"><p class="hint">Cargando señales…</p></div>
+    <p id="signalsTime" class="hint"></p>
+  </section>
+
   <button class="button" id="connect">Conectar Phantom</button>
   <a class="button secondary hidden" id="openPhantom" rel="noreferrer">Abrir esta página en Phantom</a>
   <section id="walletPanel" class="hidden">
-    <div class="box"><p class="label">Wallet conectada</p><div id="address" class="address"></div></div>
-    <div class="box"><p class="label">Saldo SOL de devnet</p><div id="balance" class="balance">—</div><button id="refresh" class="button secondary">Actualizar saldo</button></div>
+    <div class="box"><p class="label">Wallet conectada · Solana devnet</p><div id="address" class="address"></div></div>
+    <div class="box"><p class="label">Saldo SOL de devnet</p><div id="balance" class="balance">—</div><button id="refreshBalance" class="button secondary">Actualizar saldo</button></div>
     <div class="box">
-      <p class="label">Enviar SOL de prueba</p>
-      <label for="recipient">Dirección de destino</label><input id="recipient" autocomplete="off" placeholder="Dirección Solana" />
+      <p class="label">Enviar SOL de prueba</p><label for="recipient">Dirección de destino</label><input id="recipient" autocomplete="off" placeholder="Dirección Solana" />
       <label for="amount">Cantidad SOL</label><input id="amount" type="number" min="0.000001" step="0.000001" value="0.01" />
       <button id="send" class="button">Revisar y firmar en Phantom</button>
-      <p class="hint">Solo devnet. No envíes fondos reales. La dApp nunca recibe tu frase secreta ni firma por ti.</p>
+      <p class="hint">Solo devnet. No envíes fondos reales. La dApp no recibe tu frase secreta ni firma por ti.</p>
     </div>
   </section>
-  <div id="status" class="status" role="status">La página cargó. Conecta Phantom para continuar.</div>
-  <p class="hint">Si abriste esto dentro de Telegram y Phantom no aparece, pulsa “Abrir esta página en Phantom”.</p>
+  <div id="status" class="status" role="status">La página cargó. Actualizando señales…</div>
+  <p class="hint">Las señales no son recomendaciones ni ejecutan swaps. Jupiter no sirve swaps de devnet; esta versión no envía órdenes DEX. El saldo/transacción de Phantom está fijado a devnet.</p>
 </section></main>
 <script>
 (() => {
-  const DEVNET_RPC = 'https://api.devnet.solana.com';
-  const LAMPORTS_PER_SOL = 1_000_000_000;
-  const $ = (id) => document.getElementById(id);
-  const status = (text) => { $('status').textContent = text; };
-  let provider = null;
-  let owner = null;
-  let web3 = null;
+  const DEVNET_RPC='https://api.devnet.solana.com';
+  const LAMPORTS_PER_SOL=1_000_000_000;
+  const $=(id)=>document.getElementById(id);
+  const setStatus=(text)=>{$('status').textContent=text;};
+  let provider=null, owner=null, web3=null;
+  $('openPhantom').href=`https://phantom.app/ul/browse/${encodeURIComponent(location.href)}?ref=${encodeURIComponent(location.origin)}`;
 
-  const phantomUrl = `https://phantom.app/ul/browse/${encodeURIComponent(location.href)}?ref=${encodeURIComponent(location.origin)}`;
-  $('openPhantom').href = phantomUrl;
-
-  async function loadWeb3() {
-    if (web3) return web3;
-    status('Cargando librería Solana…');
-    const mod = await import('https://esm.sh/@solana/web3.js@1.98.0?bundle');
-    web3 = mod;
+  async function loadWeb3(){
+    if(web3)return web3;
+    setStatus('Cargando librería Solana…');
+    web3=await import('https://esm.sh/@solana/web3.js@1.98.0?bundle');
     return web3;
   }
-
-  function getProvider() {
-    const candidate = window.phantom?.solana || window.solana;
-    return candidate?.isPhantom ? candidate : null;
-  }
-
-  async function refreshBalance() {
-    if (!owner) return;
-    try {
-      const sol = await loadWeb3();
-      const connection = new sol.Connection(DEVNET_RPC, 'confirmed');
-      const lamports = await connection.getBalance(owner, 'confirmed');
-      $('balance').textContent = `${(lamports / LAMPORTS_PER_SOL).toFixed(6)} SOL`;
-      status('Saldo actualizado.');
-    } catch (error) {
-      status(`No se pudo consultar saldo: ${error.message || error}`);
-    }
-  }
-
-  $('connect').addEventListener('click', async () => {
-    try {
-      provider = getProvider();
-      if (!provider) {
-        $('openPhantom').classList.remove('hidden');
-        status('Phantom no está disponible en este navegador. Abre la página con el botón de Phantom o instala su app.');
-        return;
+  function price(value){return new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:6}).format(value);}
+  async function loadSignals(){
+    $('signals').innerHTML='<p class="hint">Consultando velas cerradas…</p>';
+    $('refreshSignals').disabled=true;
+    try{
+      const response=await fetch('/api/signals',{cache:'no-store'});
+      if(!response.ok)throw new Error(`HTTP ${response.status}`);
+      const data=await response.json();
+      $('signals').replaceChildren();
+      for(const item of data.signals||[]){
+        const card=document.createElement('article');card.className='signal';
+        const row=document.createElement('div');row.className='row';
+        const symbol=document.createElement('strong');symbol.textContent=item.symbol;
+        const side=document.createElement('span');side.className=`side ${item.side==='LONG'?'long':item.side==='SHORT'?'short':'neutral'}`;side.textContent=item.error?'DATOS NO DISPONIBLES':item.side||'SIN ENTRADA';
+        row.append(symbol,side);card.append(row);
+        const detail=document.createElement('small');
+        detail.textContent=item.error?item.error:`${item.price!=null?`Precio $${price(item.price)} · `:''}${item.rangeLow!=null?`Rango $${price(item.rangeLow)}–$${price(item.rangeHigh)} · `:''}${item.reason||''}${item.side?` · SL $${price(item.stop)} · TP $${price(item.target)}`:''}`;
+        card.append(detail);$('signals').append(card);
       }
-      await loadWeb3();
-      const result = await provider.connect();
-      owner = new web3.PublicKey(result.publicKey.toString());
-      $('address').textContent = owner.toBase58();
-      $('walletPanel').classList.remove('hidden');
-      $('connect').textContent = 'Phantom conectado';
-      $('openPhantom').classList.add('hidden');
-      await refreshBalance();
-    } catch (error) {
-      status(`No se pudo conectar: ${error.message || error}`);
-    }
+      $('signalsTime').textContent=`Actualizado: ${new Date(data.generatedAt).toLocaleString()}`;
+    }catch(error){$('signals').innerHTML='<p class="hint">No se pudieron cargar las señales. Comprueba Render y vuelve a intentar.</p>';setStatus(`Error de señales: ${error.message}`);}
+    finally{$('refreshSignals').disabled=false;}
+  }
+  async function refreshBalance(){
+    if(!owner)return;
+    try{const sol=await loadWeb3();const connection=new sol.Connection(DEVNET_RPC,'confirmed');const lamports=await connection.getBalance(owner,'confirmed');$('balance').textContent=`${(lamports/LAMPORTS_PER_SOL).toFixed(6)} SOL`;}
+    catch(error){setStatus(`Error consultando saldo: ${error.message||error}`);}
+  }
+  $('refreshSignals').addEventListener('click',loadSignals);
+  loadSignals();
+  setInterval(loadSignals,60_000);
+
+  $('connect').addEventListener('click',async()=>{
+    try{
+      const candidate=window.phantom?.solana||window.solana;
+      provider=candidate?.isPhantom?candidate:null;
+      if(!provider){$('openPhantom').classList.remove('hidden');setStatus('Phantom no está disponible en este navegador. Abre esta página con Phantom.');return;}
+      await loadWeb3();const result=await provider.connect();owner=new web3.PublicKey(result.publicKey.toString());
+      $('address').textContent=owner.toBase58();$('walletPanel').classList.remove('hidden');$('connect').textContent='Phantom conectado';$('openPhantom').classList.add('hidden');
+      setStatus('Wallet conectada. Red de pruebas: devnet.');await refreshBalance();
+    }catch(error){setStatus(`No se pudo conectar: ${error.message||error}`);}
   });
-
-  $('refresh').addEventListener('click', refreshBalance);
-  $('send').addEventListener('click', async () => {
-    if (!provider || !owner) return status('Conecta Phantom primero.');
-    const amount = Number($('amount').value);
-    if (!Number.isFinite(amount) || amount <= 0) return status('Introduce una cantidad SOL válida.');
-    let destination;
-    try { destination = new web3.PublicKey($('recipient').value.trim()); }
-    catch { return status('La dirección de destino no es válida.'); }
-    if (destination.equals(owner)) return status('La dirección destino coincide con la wallet conectada.');
-
-    const lamports = Math.round(amount * LAMPORTS_PER_SOL);
-    if (!Number.isSafeInteger(lamports) || lamports <= 0) return status('Cantidad fuera del rango permitido.');
-    $('send').disabled = true;
-    try {
-      const connection = new web3.Connection(DEVNET_RPC, 'confirmed');
-      const available = await connection.getBalance(owner, 'confirmed');
-      if (available < lamports + 10_000) throw new Error('Saldo insuficiente para el envío y las comisiones.');
-      const latest = await connection.getLatestBlockhash('confirmed');
-      const transaction = new web3.Transaction({ feePayer: owner, recentBlockhash: latest.blockhash });
-      transaction.add(web3.SystemProgram.transfer({ fromPubkey: owner, toPubkey: destination, lamports }));
-      status('Revisa la dirección y la cantidad en Phantom y confirma la firma…');
-      const response = await provider.signAndSendTransaction(transaction, { commitment: 'confirmed' });
-      const signature = typeof response === 'string' ? response : response.signature;
-      await connection.confirmTransaction({ signature, ...latest }, 'confirmed');
-      const link = `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
-      $('status').replaceChildren(document.createTextNode('Transacción confirmada: '));
-      const a = document.createElement('a'); a.href = link; a.target = '_blank'; a.rel = 'noreferrer'; a.textContent = signature; $('status').append(a);
-      await refreshBalance();
-    } catch (error) {
-      status(`No se completó el envío: ${error.message || error}`);
-    } finally { $('send').disabled = false; }
+  $('refreshBalance').addEventListener('click',refreshBalance);
+  $('send').addEventListener('click',async()=>{
+    if(!provider||!owner)return setStatus('Conecta Phantom primero.');
+    const amount=Number($('amount').value);if(!Number.isFinite(amount)||amount<=0)return setStatus('Introduce una cantidad válida.');
+    let destination;try{destination=new web3.PublicKey($('recipient').value.trim());}catch{return setStatus('Dirección de destino inválida.');}
+    if(destination.equals(owner))return setStatus('La dirección destino es la misma wallet.');
+    const lamports=Math.round(amount*LAMPORTS_PER_SOL);if(!Number.isSafeInteger(lamports)||lamports<=0)return setStatus('Cantidad fuera del rango.');
+    $('send').disabled=true;
+    try{
+      const sol=await loadWeb3();const connection=new sol.Connection(DEVNET_RPC,'confirmed');
+      const available=await connection.getBalance(owner,'confirmed');if(available<lamports+10_000)throw new Error('Saldo insuficiente para el envío y las comisiones.');
+      const latest=await connection.getLatestBlockhash('confirmed');const tx=new sol.Transaction({feePayer:owner,recentBlockhash:latest.blockhash});
+      tx.add(sol.SystemProgram.transfer({fromPubkey:owner,toPubkey:destination,lamports}));
+      setStatus('Revisa la dirección y cantidad y firma en Phantom…');
+      const result=await provider.signAndSendTransaction(tx,{commitment:'confirmed'});const signature=typeof result==='string'?result:result.signature;
+      await connection.confirmTransaction({signature,...latest},'confirmed');
+      const link=document.createElement('a');link.href=`https://explorer.solana.com/tx/${signature}?cluster=devnet`;link.target='_blank';link.rel='noreferrer';link.textContent=signature;
+      $('status').replaceChildren(document.createTextNode('Transacción confirmada: '),link);await refreshBalance();
+    }catch(error){setStatus(`No se completó el envío: ${error.message||error}`);}
+    finally{$('send').disabled=false;}
   });
-
-  if (window.Telegram?.WebApp) window.Telegram.WebApp.ready();
+  if(window.Telegram?.WebApp)window.Telegram.WebApp.ready();
 })();
 </script>
 </body>
